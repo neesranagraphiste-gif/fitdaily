@@ -78,6 +78,263 @@ const LS = {
 const EMPTY_RECIPE = { name: "", servings: 2, category: "Dejeuner", ingredients: [], steps: [], notes: "" };
 const CATEGORIES = ["Petit-dejeuner", "Dejeuner", "Diner", "Collation", "Pre-entrainement", "Post-entrainement"];
 
+const GOAL_TYPES = ["Perte de poids", "Maintien du poids", "Prise de masse", "Amelioration cardio", "Renforcement musculaire"];
+
+function StatsTab({ weight, setWeight, height, setHeight, age, setAge, gender, setGender, bmr, tdee, targetCal, netCal, totalCalEaten, calBurned, dayProgress, todayKey, DAYS, inp, card }) {
+  const [goals, setGoals] = useState(() => LS.get("goals", {
+    type: "Perte de poids",
+    targetWeight: "",
+    startWeight: "",
+    startDate: new Date().toISOString().split("T")[0],
+    weeklyTarget: 0.5,
+    notes: "",
+  }));
+  const [weightLog, setWeightLog] = useState(() => LS.get("weightLog", []));
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [newWeight, setNewWeight] = useState("");
+
+  useEffect(() => { LS.set("goals", goals); }, [goals]);
+  useEffect(() => { LS.set("weightLog", weightLog); }, [weightLog]);
+
+  const saveGoal = (updates) => { setGoals(prev => ({ ...prev, ...updates })); setEditingGoal(false); };
+
+  const addWeightEntry = () => {
+    const val = parseFloat(newWeight);
+    if (!val || val < 30 || val > 300) return;
+    const entry = { date: new Date().toISOString().split("T")[0], weight: val, id: Date.now() };
+    setWeightLog(prev => {
+      const filtered = prev.filter(e => e.date !== entry.date);
+      return [...filtered, entry].sort((a,b) => a.date.localeCompare(b.date));
+    });
+    setNewWeight("");
+  };
+
+  const imc = (weight / Math.pow(height / 100, 2)).toFixed(1);
+  const imcStatus = imc < 18.5 ? { label:"Sous-poids", color:"#0099ff" } : imc < 25 ? { label:"Normal", color:"#00d4aa" } : imc < 30 ? { label:"Surpoids", color:"#ff6b35" } : { label:"Obesite", color:"#ff4757" };
+
+  const lastWeight = weightLog.length > 0 ? weightLog[weightLog.length - 1].weight : null;
+  const firstWeight = weightLog.length > 0 ? weightLog[0].weight : null;
+  const weightDiff = lastWeight && firstWeight ? (lastWeight - firstWeight).toFixed(1) : null;
+
+  // Indicateur calorique
+  const calOk = totalCalEaten > 0 && netCal <= targetCal && netCal >= targetCal * 0.7;
+  const calOver = netCal > targetCal;
+  const calUnder = totalCalEaten > 0 && netCal < targetCal * 0.7;
+  const calEmpty = totalCalEaten === 0;
+  let calStatus, calColor, calBg, calIcon;
+  if (calEmpty) { calStatus = "Aucun repas enregistre aujourd'hui"; calColor = "#7c83a0"; calBg = "rgba(255,255,255,0.04)"; calIcon = "⏳"; }
+  else if (calOk) { calStatus = "Parfait ! Vous etes dans votre objectif."; calColor = "#00d4aa"; calBg = "rgba(0,212,170,0.08)"; calIcon = "✅"; }
+  else if (calOver) { calStatus = `Depassement de ${netCal - targetCal} kcal. Reduisez un peu.`; calColor = "#ff4757"; calBg = "rgba(255,71,87,0.08)"; calIcon = "🔴"; }
+  else if (calUnder) { calStatus = `Apport trop bas (${netCal} kcal). Mangez davantage !`; calColor = "#ff6b35"; calBg = "rgba(255,107,53,0.08)"; calIcon = "⚠️"; }
+
+  const daysElapsed = goals.startDate ? Math.floor((new Date() - new Date(goals.startDate)) / (1000*60*60*24)) : 0;
+  const expectedLoss = goals.weeklyTarget ? (daysElapsed / 7 * goals.weeklyTarget).toFixed(1) : null;
+  const actualLoss = weightDiff ? Math.abs(weightDiff) : null;
+  const onTrack = actualLoss && expectedLoss ? parseFloat(actualLoss) >= parseFloat(expectedLoss) * 0.8 : null;
+
+  return (
+    <div>
+      {/* INDICATEUR CALORIQUE DU JOUR */}
+      <div style={{ background:calBg, border:`1px solid ${calColor}44`, borderRadius:20, padding:20, marginBottom:16 }}>
+        <div style={{ fontSize:11, color:calColor, textTransform:"uppercase", letterSpacing:2, fontWeight:700, marginBottom:8 }}>Bilan calorique</div>
+        <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:12 }}>
+          <div style={{ fontSize:36 }}>{calIcon}</div>
+          <div>
+            <div style={{ fontSize:24, fontWeight:900, color:calColor }}>{calEmpty ? "--" : netCal} <span style={{ fontSize:13, fontWeight:500, color:"#7c83a0" }}>/ {targetCal} kcal</span></div>
+            <div style={{ fontSize:13, color:calColor, marginTop:2 }}>{calStatus}</div>
+          </div>
+        </div>
+        {!calEmpty && (
+          <div>
+            <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:10, height:10, marginBottom:8 }}>
+              <div style={{ width:`${Math.min(100, (netCal/targetCal)*100)}%`, height:"100%", borderRadius:10, background:calOk?"linear-gradient(90deg,#00d4aa,#0099ff)":calOver?"linear-gradient(90deg,#ff6b35,#ff4757)":"linear-gradient(90deg,#ff6b35,#ffaa00)", transition:"width 0.5s" }} />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+              {[{label:"Manges",value:totalCalEaten,color:"#e8eaf6"},{label:"Brules sport",value:calBurned,color:"#ff6b35"},{label:"Net",value:netCal,color:calColor}].map(s => (
+                <div key={s.label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"8px", textAlign:"center" }}>
+                  <div style={{ fontSize:16, fontWeight:900, color:s.color }}>{s.value}</div>
+                  <div style={{ fontSize:9, color:"#7c83a0", textTransform:"uppercase" }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* OBJECTIF */}
+      <div style={{ ...card }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={{ fontWeight:800, fontSize:16 }}>🎯 Mon objectif</div>
+          <button onClick={() => setEditingGoal(!editingGoal)} style={{ background:editingGoal?"linear-gradient(135deg,#00d4aa,#0099ff)":"rgba(255,255,255,0.07)", border:"none", color:editingGoal?"#fff":"#7c83a0", borderRadius:10, padding:"6px 14px", cursor:"pointer", fontSize:12, fontWeight:700 }}>{editingGoal ? "Sauvegarder" : "Modifier"}</button>
+        </div>
+
+        {editingGoal ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div>
+              <div style={{ fontSize:11, color:"#7c83a0", marginBottom:8 }}>Type d'objectif</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                {GOAL_TYPES.map(t => (
+                  <button key={t} onClick={() => setGoals(p => ({...p, type:t}))} style={{ padding:"7px 12px", borderRadius:20, cursor:"pointer", fontSize:11, fontWeight:700, background:goals.type===t?"linear-gradient(135deg,#00d4aa,#0099ff)":"rgba(255,255,255,0.07)", border:"none", color:goals.type===t?"#fff":"#7c83a0" }}>{t}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <div><div style={{ fontSize:11, color:"#7c83a0", marginBottom:6 }}>Poids de depart (kg)</div><input type="number" step="0.1" value={goals.startWeight} onChange={e => setGoals(p => ({...p,startWeight:e.target.value}))} placeholder="Ex: 85" style={inp} /></div>
+              <div><div style={{ fontSize:11, color:"#7c83a0", marginBottom:6 }}>Poids cible (kg)</div><input type="number" step="0.1" value={goals.targetWeight} onChange={e => setGoals(p => ({...p,targetWeight:e.target.value}))} placeholder="Ex: 75" style={inp} /></div>
+              <div><div style={{ fontSize:11, color:"#7c83a0", marginBottom:6 }}>Date de debut</div><input type="date" value={goals.startDate} onChange={e => setGoals(p => ({...p,startDate:e.target.value}))} style={inp} /></div>
+              <div>
+                <div style={{ fontSize:11, color:"#7c83a0", marginBottom:6 }}>Objectif hebdo (kg/sem)</div>
+                <select value={goals.weeklyTarget} onChange={e => setGoals(p => ({...p,weeklyTarget:parseFloat(e.target.value)}))} style={{ ...inp, cursor:"pointer" }}>
+                  {[0.25,0.5,0.75,1].map(v => <option key={v} value={v}>{v} kg/semaine</option>)}
+                </select>
+              </div>
+            </div>
+            <div><div style={{ fontSize:11, color:"#7c83a0", marginBottom:6 }}>Notes / motivation</div><textarea value={goals.notes} onChange={e => setGoals(p => ({...p,notes:e.target.value}))} placeholder="Pourquoi je fais ca, ma motivation..." rows={2} style={{ ...inp, resize:"none" }} /></div>
+            <button onClick={() => setEditingGoal(false)} style={{ padding:"12px", borderRadius:12, background:"linear-gradient(135deg,#00d4aa,#0099ff)", border:"none", color:"#fff", fontWeight:800, cursor:"pointer", fontSize:14 }}>Enregistrer l'objectif</button>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+              <div style={{ width:48, height:48, borderRadius:16, background:"linear-gradient(135deg,#00d4aa22,#0099ff22)", border:"1px solid #00d4aa44", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24 }}>
+                {goals.type==="Perte de poids"?"⬇️":goals.type==="Prise de masse"?"⬆️":goals.type==="Maintien du poids"?"⚖️":"🏃"}
+              </div>
+              <div>
+                <div style={{ fontWeight:800, fontSize:16 }}>{goals.type}</div>
+                {goals.startDate && <div style={{ fontSize:11, color:"#7c83a0", marginTop:2 }}>Depuis le {new Date(goals.startDate).toLocaleDateString("fr-FR")} ({daysElapsed} jours)</div>}
+              </div>
+            </div>
+
+            {goals.startWeight && goals.targetWeight && (
+              <div style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:"#7c83a0", marginBottom:6 }}>
+                  <span>{goals.startWeight} kg</span>
+                  <span style={{ color:"#00d4aa", fontWeight:700 }}>Cible : {goals.targetWeight} kg</span>
+                </div>
+                {(() => {
+                  const start = parseFloat(goals.startWeight);
+                  const target = parseFloat(goals.targetWeight);
+                  const current = lastWeight || weight;
+                  const total = Math.abs(start - target);
+                  const done = Math.abs(start - current);
+                  const pct = Math.min(100, Math.round((done / total) * 100));
+                  const remaining = Math.abs(current - target).toFixed(1);
+                  const isOnTrack = onTrack !== null ? onTrack : true;
+                  return (
+                    <div>
+                      <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:10, height:12, marginBottom:8 }}>
+                        <div style={{ width:`${pct}%`, height:"100%", borderRadius:10, background:isOnTrack?"linear-gradient(90deg,#00d4aa,#0099ff)":"linear-gradient(90deg,#ff6b35,#ff4757)", transition:"width 0.5s", position:"relative" }}>
+                          {pct > 10 && <div style={{ position:"absolute", right:6, top:"50%", transform:"translateY(-50%)", fontSize:8, fontWeight:900, color:"#fff" }}>{pct}%</div>}
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                        <span style={{ color:isOnTrack?"#00d4aa":"#ff4757", fontWeight:700 }}>{isOnTrack?"✅ En bonne voie !":"⚠️ A accelerer"}</span>
+                        <span style={{ color:"#7c83a0" }}>Encore {remaining} kg</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {goals.notes && <div style={{ background:"rgba(0,212,170,0.06)", borderRadius:12, padding:"10px 14px", fontSize:13, color:"#a8b0c8", fontStyle:"italic", borderLeft:"3px solid #00d4aa" }}>{goals.notes}</div>}
+
+            {expectedLoss && (
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:14 }}>
+                <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:12, padding:"12px", textAlign:"center" }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#0099ff" }}>{expectedLoss} kg</div>
+                  <div style={{ fontSize:10, color:"#7c83a0", marginTop:2 }}>Perte attendue</div>
+                </div>
+                <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:12, padding:"12px", textAlign:"center" }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:onTrack?"#00d4aa":"#ff4757" }}>{actualLoss ? `${actualLoss} kg` : "-- kg"}</div>
+                  <div style={{ fontSize:10, color:"#7c83a0", marginTop:2 }}>Perte reelle</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SUIVI DU POIDS */}
+      <div style={{ ...card }}>
+        <div style={{ fontWeight:800, fontSize:16, marginBottom:14 }}>⚖️ Suivi du poids</div>
+        <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+          <input type="number" step="0.1" value={newWeight} onChange={e => setNewWeight(e.target.value)} placeholder="Votre poids aujourd'hui (kg)" style={{ ...inp, flex:1 }} />
+          <button onClick={addWeightEntry} disabled={!newWeight} style={{ padding:"10px 16px", borderRadius:10, background:newWeight?"linear-gradient(135deg,#00d4aa,#0099ff)":"rgba(255,255,255,0.08)", border:"none", color:newWeight?"#fff":"#4a4f6a", cursor:newWeight?"pointer":"not-allowed", fontWeight:700, fontSize:13, flexShrink:0 }}>+ Ajouter</button>
+        </div>
+        {weightLog.length > 0 ? (
+          <div>
+            {weightDiff !== null && (
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:parseFloat(weightDiff)<0?"rgba(0,212,170,0.08)":"rgba(255,71,87,0.08)", border:`1px solid ${parseFloat(weightDiff)<0?"rgba(0,212,170,0.3)":"rgba(255,71,87,0.3)"}`, borderRadius:12, padding:"10px 14px", marginBottom:12 }}>
+                <div><div style={{ fontSize:12, color:"#7c83a0" }}>Evolution depuis le debut</div><div style={{ fontSize:20, fontWeight:900, color:parseFloat(weightDiff)<0?"#00d4aa":"#ff4757" }}>{parseFloat(weightDiff)>0?"+":""}{weightDiff} kg</div></div>
+                <div style={{ fontSize:32 }}>{parseFloat(weightDiff)<0?"📉":"📈"}</div>
+              </div>
+            )}
+            <div style={{ maxHeight:200, overflowY:"auto" }}>
+              {[...weightLog].reverse().map((entry, idx) => (
+                <div key={entry.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 12px", background:idx===0?"rgba(0,212,170,0.06)":"rgba(255,255,255,0.03)", borderRadius:10, marginBottom:6, border:`1px solid ${idx===0?"rgba(0,212,170,0.2)":"rgba(255,255,255,0.05)"}` }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:idx===0?700:500 }}>{idx===0?"Derniere mesure : ":""}{entry.weight} kg</div>
+                    <div style={{ fontSize:11, color:"#7c83a0" }}>{new Date(entry.date).toLocaleDateString("fr-FR")}</div>
+                  </div>
+                  <button onClick={() => setWeightLog(prev => prev.filter(e => e.id!==entry.id))} style={{ background:"rgba(255,71,87,0.15)", border:"none", color:"#ff4757", borderRadius:8, width:26, height:26, cursor:"pointer", fontSize:12 }}>x</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div style={{ textAlign:"center", padding:"20px 0", color:"#7c83a0", fontSize:13 }}>Entrez votre poids regulierement pour suivre votre evolution</div>
+        )}
+      </div>
+
+      {/* PROFIL */}
+      <div style={{ ...card }}>
+        <div style={{ fontWeight:800, fontSize:16, marginBottom:16 }}>⚙️ Mon profil</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          {[{label:"Poids (kg)",value:weight,set:setWeight,min:40,max:200},{label:"Taille (cm)",value:height,set:setHeight,min:140,max:220},{label:"Age",value:age,set:setAge,min:15,max:80}].map(f => (
+            <div key={f.label}><div style={{ fontSize:11, color:"#7c83a0", marginBottom:4 }}>{f.label}</div><input type="number" min={f.min} max={f.max} value={f.value} onChange={e => f.set(parseInt(e.target.value)||f.value)} style={{ ...inp, fontSize:16, fontWeight:700 }} /></div>
+          ))}
+          <div>
+            <div style={{ fontSize:11, color:"#7c83a0", marginBottom:4 }}>Genre</div>
+            <div style={{ display:"flex", gap:6 }}>
+              {["homme","femme"].map(g => <button key={g} onClick={() => setGender(g)} style={{ flex:1, padding:"8px", borderRadius:10, background:gender===g?"linear-gradient(135deg,#00d4aa,#0099ff)":"rgba(255,255,255,0.06)", border:"none", color:gender===g?"#fff":"#7c83a0", cursor:"pointer", fontSize:12, fontWeight:700, textTransform:"capitalize" }}>{g}</button>)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* METABOLISME */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+        {[{label:"Metabolisme de base",value:Math.round(bmr),unit:"kcal/j",color:"#7c83a0",desc:"Au repos total"},{label:"Depense totale",value:tdee,unit:"kcal/j",color:"#0099ff",desc:"Activite moderee"},{label:"Objectif calorique",value:targetCal,unit:"kcal/j",color:"#00d4aa",desc:"Deficit 20% pour maigrir"},{label:"IMC",value:imc,unit:"",color:imcStatus.color,desc:imcStatus.label}].map(c => (
+          <div key={c.label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:16, border:"1px solid rgba(255,255,255,0.06)", padding:"16px 14px" }}>
+            <div style={{ fontSize:22, fontWeight:900, color:c.color }}>{c.value}<span style={{ fontSize:11 }}> {c.unit}</span></div>
+            <div style={{ fontSize:12, fontWeight:600, marginTop:2 }}>{c.label}</div>
+            <div style={{ fontSize:10, color:c.desc===imcStatus.label?imcStatus.color:"#4a4f6a", marginTop:2, fontWeight:c.desc===imcStatus.label?700:400 }}>{c.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* SEMAINE */}
+      <div style={{ ...card }}>
+        <div style={{ fontWeight:700, marginBottom:16 }}>Progression de la semaine</div>
+        {DAYS.map(d => {
+          const prog = dayProgress(d); const p = WORKOUT_PROGRAMS[d];
+          return (
+            <div key={d} style={{ marginBottom:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4, fontSize:12 }}>
+                <span>{p.emoji} <span style={{ color:d===todayKey?"#00d4aa":"#e8eaf6" }}>{p.label}</span> — {p.focus}</span>
+                <span style={{ fontWeight:700, color:prog===100?"#00d4aa":"#7c83a0" }}>{prog}%</span>
+              </div>
+              <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:6, height:6 }}>
+                <div style={{ width:`${prog}%`, height:"100%", borderRadius:6, background:prog===100?"linear-gradient(90deg,#00d4aa,#0099ff)":"linear-gradient(90deg,#ff6b35,#ff4757)", transition:"width 0.5s" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SportApp() {
   const todayIdx = (new Date().getDay() + 6) % 7;
   const todayKey = DAYS[todayIdx];
@@ -782,48 +1039,16 @@ export default function SportApp() {
 
         {/* STATS */}
         {activeTab === "stats" && (
-          <div>
-            <div style={{ ...card }}>
-              <div style={{ fontWeight:800, fontSize:16, marginBottom:16 }}>Mon profil</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                {[{label:"Poids (kg)",value:weight,set:setWeight,min:40,max:200},{label:"Taille (cm)",value:height,set:setHeight,min:140,max:220},{label:"Age",value:age,set:setAge,min:15,max:80}].map(f => (
-                  <div key={f.label}><div style={{ fontSize:11, color:"#7c83a0", marginBottom:4 }}>{f.label}</div><input type="number" min={f.min} max={f.max} value={f.value} onChange={e => f.set(parseInt(e.target.value)||f.value)} style={{ ...inp, fontSize:16, fontWeight:700 }} /></div>
-                ))}
-                <div>
-                  <div style={{ fontSize:11, color:"#7c83a0", marginBottom:4 }}>Genre</div>
-                  <div style={{ display:"flex", gap:6 }}>
-                    {["homme","femme"].map(g => <button key={g} onClick={() => setGender(g)} style={{ flex:1, padding:"8px", borderRadius:10, background:gender===g?"linear-gradient(135deg,#00d4aa,#0099ff)":"rgba(255,255,255,0.06)", border:"none", color:gender===g?"#fff":"#7c83a0", cursor:"pointer", fontSize:12, fontWeight:700, textTransform:"capitalize" }}>{g}</button>)}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
-              {[{label:"Metabolisme de base",value:Math.round(bmr),unit:"kcal/j",color:"#7c83a0",desc:"Au repos total"},{label:"Depense totale",value:tdee,unit:"kcal/j",color:"#0099ff",desc:"Activite moderee"},{label:"Objectif perte de poids",value:targetCal,unit:"kcal/j",color:"#00d4aa",desc:"Deficit de 20%"},{label:"IMC",value:(weight/Math.pow(height/100,2)).toFixed(1),unit:"",color:"#ff6b35",desc:"Indice de masse corporelle"}].map(c => (
-                <div key={c.label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:16, border:"1px solid rgba(255,255,255,0.06)", padding:"16px 14px" }}>
-                  <div style={{ fontSize:22, fontWeight:900, color:c.color }}>{c.value}<span style={{ fontSize:11 }}> {c.unit}</span></div>
-                  <div style={{ fontSize:12, fontWeight:600, marginTop:2 }}>{c.label}</div>
-                  <div style={{ fontSize:10, color:"#4a4f6a", marginTop:2 }}>{c.desc}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{ ...card }}>
-              <div style={{ fontWeight:700, marginBottom:16 }}>Progression de la semaine</div>
-              {DAYS.map(d => {
-                const prog = dayProgress(d); const p = WORKOUT_PROGRAMS[d];
-                return (
-                  <div key={d} style={{ marginBottom:14 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4, fontSize:12 }}>
-                      <span>{p.emoji} <span style={{ color:d===todayKey?"#00d4aa":"#e8eaf6" }}>{p.label}</span> — {p.focus}</span>
-                      <span style={{ fontWeight:700, color:prog===100?"#00d4aa":"#7c83a0" }}>{prog}%</span>
-                    </div>
-                    <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:6, height:6 }}>
-                      <div style={{ width:`${prog}%`, height:"100%", borderRadius:6, background:prog===100?"linear-gradient(90deg,#00d4aa,#0099ff)":"linear-gradient(90deg,#ff6b35,#ff4757)", transition:"width 0.5s" }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <StatsTab
+            weight={weight} setWeight={setWeight}
+            height={height} setHeight={setHeight}
+            age={age} setAge={setAge}
+            gender={gender} setGender={setGender}
+            bmr={bmr} tdee={tdee} targetCal={targetCal}
+            netCal={netCal} totalCalEaten={totalCalEaten} calBurned={calBurned}
+            dayProgress={dayProgress} todayKey={todayKey} DAYS={DAYS}
+            inp={inp} card={card}
+          />
         )}
 
       </div>
